@@ -358,6 +358,14 @@ with header_col2:
         """,
         unsafe_allow_html=True
     )
+    # Espaciado visual debajo del encabezado
+st.markdown(
+    """
+    <div style="height:35px;"></div>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # ==========================
 # 9) FILTROS
