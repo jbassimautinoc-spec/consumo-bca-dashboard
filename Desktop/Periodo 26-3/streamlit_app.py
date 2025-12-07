@@ -1,8 +1,8 @@
-import streamlit as st
+# ==========================
+# AUTENTICACIÓN POR EMAIL + CÓDIGO
+# ==========================
 
-# ==========================
-# AUTENTICACIÓN
-# ==========================
+import streamlit as st
 
 USUARIOS_PERMITIDOS = {
     "ycarriego@grupobca.com.ar": 8521,
@@ -15,35 +15,37 @@ USUARIOS_PERMITIDOS = {
     "dloillet@grupobca.com.ar": 2287
 }
 
+# Inicializar variable de sesión
 if "autenticado" not in st.session_state:
-    st.session_state.autenticado = False
+    st.session_state["autenticado"] = False
 
-if not st.session_state.autenticado:
-    st.title("Acceso al Panel de Consumo BCA")
+# Pantalla de login si NO está autenticado
+if not st.session_state["autenticado"]:
+    st.header("Acceso al Panel de Consumo BCA")
 
-    email = st.text_input("Correo institucional")
-    codigo = st.text_input("Código de acceso", type="password")
+    email = st.text_input("Ingrese su correo corporativo:")
+    codigo = st.text_input("Ingrese su código de acceso:", type="password")
 
     if st.button("Ingresar"):
         if email in USUARIOS_PERMITIDOS and str(codigo) == str(USUARIOS_PERMITIDOS[email]):
-            st.session_state.autenticado = True
+            st.session_state["autenticado"] = True
+            st.success("Acceso concedido. Bienvenido.")
             st.rerun()
+
         else:
-            st.error("Correo o código incorrecto")
+            st.error("Correo o código incorrecto.")
 
-    st.stop()   # 🔥 BLOQUEA TODO EL CÓDIGO DE ABAJO
-
-# ==========================
-# IMPORTS DEL DASHBOARD
-# ==========================
+    st.stop()  # 🔥 BLOQUEA TODO EL DASHBOARD
 
 import pandas as pd
 import numpy as np
+import streamlit as st
 from io import BytesIO
 import re
 import altair as alt
 import os
 
+# PDF
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 )
@@ -54,28 +56,15 @@ from reportlab.lib.units import cm
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 
-# AQUÍ RECIÉN empieza el dashboard.
-# NADA antes del login.
+# ==========================
+# CONFIGURACIÓN GENERAL
+# ==========================
 
 TOLERANCIA_PCT = 0.10
 
 FILE_CONSUMO = "consumo_real.xlsx"
-FILE_KM = "distances_26-11 al 03-12.xlsx"
+FILE_KM = "distances_26-11 al 03-12.xlsx"   # ajustá el nombre si cambia
 FILE_NOMINA = "Nomina_consumo_camion.xlsx"
-
-COLOR_PRINCIPAL = "#006778"
-COLOR_SECUNDARIO = "#009999"
-
-# ==========================
-# 1) CARGA DE ARCHIVOS (YA NO FALLA)
-# ==========================
-
-df_cons = pd.read_excel(FILE_CONSUMO)
-df_km = pd.read_excel(FILE_KM)
-df_nom = pd.read_excel(FILE_NOMINA)
-
-# ... y el resto de tu dashboard sigue igual
-
 
 COLOR_PRINCIPAL = "#006778"   # BCA aprox
 COLOR_SECUNDARIO = "#009999"  # BCA aprox
@@ -219,6 +208,11 @@ def recomendaciones_automaticas(normal, auditar, dudoso, sin_datos, total):
 df_cons = pd.read_excel(FILE_CONSUMO)
 df_km = pd.read_excel(FILE_KM)
 df_nom = pd.read_excel(FILE_NOMINA)
+
+# Renombrar la columna correcta
+if "LITROS UNIDADES" in df_cons.columns:
+    df_cons = df_cons.rename(columns={"LITROS UNIDADES": "LITROS"})
+
 
 # ==========================
 # 2) NORMALIZAR NOMBRES
@@ -487,11 +481,14 @@ if not salida_filtrada.empty:
 
     st.altair_chart(chart_barras + labels, use_container_width=True)
 
-# ==========================
-# 12) TABLA DETALLADA
-# ==========================
-
+# ======================================================
+# TABLA DETALLADA
+# ======================================================
 st.subheader("Detalle por unidad")
+
+# 🔧 Streamlit no soporta emojis ni objetos en tablas HTML → los quitamos
+if "COLOR" in salida_filtrada.columns:
+    salida_filtrada = salida_filtrada.drop(columns=["COLOR"])
 
 html_table = salida_filtrada.style.apply(color_row, axis=1).format({
     "KM_RECORRIDOS": "{:.2f}",
@@ -504,6 +501,7 @@ html_table = salida_filtrada.style.apply(color_row, axis=1).format({
 }).to_html()
 
 st.markdown(html_table, unsafe_allow_html=True)
+
 
 # ==========================
 # 13) EXPORTACIÓN EXCEL / CSV
