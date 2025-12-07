@@ -1,0 +1,266 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+from io import BytesIO
+import re
+
+# Parámetros
+TOLERANCIA_PCT = 0.10
+
+# Archivos
+FILE_CONSUMO = "consumo_real.xlsx"
+FILE_KM = "distances_26-11 al 03-12.xlsx"
+FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+
+# ------------------------------
+#  VALIDACIÓN DE PATENTES
+# ------------------------------
+def es_patente_valida(p):
+    """Valida patentes argentinas formato viejo AAA123 o nuevo AA123BB."""
+    if pd.isna(p):
+        return False
+
+    p = str(p).strip().upper()
+
+    formato_viejo = r'^[A-Z]{3}[0-9]{3}$'      # ABC123
+    formato_nuevo = r'^[A-Z]{2}[0-9]{3}[A-Z]{2}$'  # AB123CD
+
+    return bool(re.match(formato_viejo, p) or re.match(formato_nuevo, p))
+
+
+# --- 1) CARGA ---
+df_cons = pd.read_excel(FILE_CONSUMO)
+df_km = pd.read_excel(FILE_KM)
+df_nom = pd.read_excel(FILE_NOMINA)
+
+# --- 2) NORMALIZACIÓN ---
+df_cons = df_cons.rename(columns={"IDENTIFICACIONTARJETA": "PATENTE", "LITROS UNIDADES": "LITROS"})
+df_km = df_km.rename(columns={"Placa/Patente": "PATENTE", "Distancia [km]": "KM_RECORRIDOS"})
+
+df_nom.columns = [c.upper() for c in df_nom.columns]
+
+if "PATENTE" not in df_nom.columns:
+    for c in df_nom.columns:
+        if "PAT" in c.upper() or "DOMIN" in c.upper():
+            df_nom = df_nom.rename(columns={c: "PATENTE"})
+            break
+
+possible_names = [c for c in df_nom.columns if "LIT" in c.upper() and "100" in c]
+if not possible_names:
+    possible_names = [c for c in df_nom.columns if "LIT" in c.upper()]
+consumo_col = possible_names[0]
+df_nom = df_nom.rename(columns={consumo_col: "LITROS_100KM"})
+
+# --- 3) LIMPIEZA BÁSICA ---
+def to_num_col(s):
+    return pd.to_numeric(s.astype(str).str.replace(",", ".", regex=False), errors="coerce")
+
+df_cons["LITROS"] = to_num_col(df_cons["LITROS"])
+df_km["KM_RECORRIDOS"] = to_num_col(df_km["KM_RECORRIDOS"])
+df_nom["LITROS_100KM"] = to_num_col(df_nom["LITROS_100KM"])
+
+df_cons["PATENTE"] = df_cons["PATENTE"].astype(str).str.upper().str.strip()
+df_km["PATENTE"] = df_km["PATENTE"].astype(str).str.upper().str.strip()
+df_nom["PATENTE"] = df_nom["PATENTE"].astype(str).str.upper().str.strip()
+
+# ------------------------------
+#  FILTRO DE PATENTES INVÁLIDAS
+# ------------------------------
+df_cons_invalidas = df_cons[~df_cons["PATENTE"].apply(es_patente_valida)]
+df_km_invalidas   = df_km[~df_km["PATENTE"].apply(es_patente_valida)]
+df_nom_invalidas  = df_nom[~df_nom["PATENTE"].apply(es_patente_valida)]
+
+df_cons = df_cons[df_cons["PATENTE"].apply(es_patente_valida)]
+df_km   = df_km[df_km["PATENTE"].apply(es_patente_valida)]
+df_nom  = df_nom[df_nom["PATENTE"].apply(es_patente_valida)]
+
+# --- 4) AGRUPACIÓN ---
+df_litros_total = df_cons.groupby("PATENTE", as_index=False)["LITROS"].sum().rename(columns={"LITROS": "LITROS_TOTALES"})
+df_km_total = df_km.groupby("PATENTE", as_index=False)["KM_RECORRIDOS"].sum()
+
+# --- 5) UNIFICACIÓN ---
+cols_nom = ["PATENTE", "LITROS_100KM"]
+if "MODELO" in df_nom.columns:
+    cols_nom.append("MODELO")
+
+df_final = pd.merge(df_km_total, df_litros_total, on="PATENTE", how="outer")
+df_final = pd.merge(df_final, df_nom[cols_nom], on="PATENTE", how="left")
+
+df_final["KM_RECORRIDOS"] = df_final["KM_RECORRIDOS"].fillna(0)
+df_final["LITROS_TOTALES"] = df_final["LITROS_TOTALES"].fillna(0)
+
+# --- 6) CÁLCULOS ---
+df_final["CONSUMO_REAL_L_100KM"] = np.where(
+    df_final["KM_RECORRIDOS"] > 0,
+    (df_final["LITROS_TOTALES"] / df_final["KM_RECORRIDOS"]) * 100,
+    np.nan
+)
+
+df_final["CONSUMO_TEORICO_L_100KM"] = df_final["LITROS_100KM"]
+df_final["LITROS_TEOREICOS_ESPERADOS"] = (df_final["KM_RECORRIDOS"] * df_final["CONSUMO_TEORICO_L_100KM"]) / 100
+
+df_final["DESVIO_LITROS"] = df_final["LITROS_TOTALES"] - df_final["LITROS_TEOREICOS_ESPERADOS"]
+df_final["DESVIO_PCT"] = np.where(
+    df_final["LITROS_TEOREICOS_ESPERADOS"] > 0,
+    df_final["DESVIO_LITROS"] / df_final["LITROS_TEOREICOS_ESPERADOS"],
+    np.nan
+)
+
+df_final["MIN_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 - TOLERANCIA_PCT)
+df_final["MAX_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 + TOLERANCIA_PCT)
+
+# --- 7) CLASIFICACIÓN DE ESTADOS ---
+def clasificar_estado(row):
+    km = row["KM_RECORRIDOS"]
+    litros = row["LITROS_TOTALES"]
+    cons_real = row["CONSUMO_REAL_L_100KM"]
+    cons_teor = row["CONSUMO_TEORICO_L_100KM"]
+    min_ok = row["MIN_OK"]
+    max_ok = row["MAX_OK"]
+
+    if km == 0 and litros == 0:
+        return "SIN MOVIMIENTO"
+    if km > 0 and litros == 0:
+        return "FALTA CARGA"
+    if km == 0 and litros > 0:
+        return "ERROR DE KM"
+    if pd.isna(cons_real) or pd.isna(cons_teor):
+        return "SIN DATOS"
+
+    limite_mejor_15 = cons_teor * 0.85
+    if cons_real < limite_mejor_15:
+        return "DUDOSO"
+
+    if min_ok <= cons_real <= max_ok:
+        return "OK"
+
+    if limite_mejor_15 <= cons_real < min_ok:
+        return "OK"
+
+    if cons_real > max_ok:
+        return "FUERA"
+
+    return "SIN DATOS"
+
+df_final["ESTADO"] = df_final.apply(clasificar_estado, axis=1)
+
+df_final["COLOR"] = df_final["ESTADO"].map({
+    "OK": "🟢",
+    "FUERA": "🔴",
+    "DUDOSO": "🔵",
+    "SIN MOVIMIENTO": "⚪",
+    "FALTA CARGA": "🟣",
+    "ERROR DE KM": "⚠️",
+    "SIN DATOS": "🟡"
+})
+
+# --- 8) SALIDA FINAL ---
+salida = df_final[[
+    "PATENTE",
+    "MODELO",
+    "KM_RECORRIDOS",
+    "LITROS_TOTALES",
+    "CONSUMO_REAL_L_100KM",
+    "CONSUMO_TEORICO_L_100KM",
+    "LITROS_TEOREICOS_ESPERADOS",
+    "DESVIO_LITROS",
+    "DESVIO_PCT",
+    "ESTADO",
+    "COLOR"
+]].sort_values(["MODELO", "PATENTE"])
+
+
+# ======================================================================
+#                         STREAMLIT DESDE AQUÍ
+# ======================================================================
+
+st.set_page_config(page_title="Control de consumo", layout="wide")
+st.title("🚛 Control de consumo")
+
+# --- Avisos sobre patentes inválidas ---
+if not df_cons_invalidas.empty:
+    st.warning("⚠️ Patentes inválidas encontradas en archivo de consumo:")
+    st.write(df_cons_invalidas["PATENTE"].unique())
+
+if not df_km_invalidas.empty:
+    st.warning("⚠️ Patentes inválidas encontradas en archivo de distancias:")
+    st.write(df_km_invalidas["PATENTE"].unique())
+
+if not df_nom_invalidas.empty:
+    st.warning("⚠️ Patentes inválidas encontradas en archivo de nómina:")
+    st.write(df_nom_invalidas["PATENTE"].unique())
+
+# --- Filtro por modelo ---
+modelos = salida["MODELO"].dropna().unique().tolist()
+modelos.sort()
+modelo_sel = st.sidebar.selectbox("Filtrar por modelo", ["TODOS"] + modelos)
+
+if modelo_sel != "TODOS":
+    salida_filtrada = salida[salida["MODELO"] == modelo_sel]
+else:
+    salida_filtrada = salida
+
+# --- Ordenamiento ---
+st.sidebar.subheader("Ordenar por columna")
+columnas_orden = salida.columns.tolist()
+columna_sel = st.sidebar.selectbox("Columna", columnas_orden)
+asc = st.sidebar.checkbox("Ascendente", True)
+
+salida_filtrada = salida_filtrada.sort_values(by=columna_sel, ascending=asc)
+
+# --- Tabla con colores ---
+def color_row(row):
+    if row["ESTADO"] == "OK":
+        return ["background-color:#dcedc8"] * len(row)
+    elif row["ESTADO"] == "FUERA":
+        return ["background-color:#ffcdd2"] * len(row)
+    elif row["ESTADO"] == "DUDOSO":
+        return ["background-color:#bbdefb"] * len(row)
+    else:
+        return ["background-color:#fff9c4"] * len(row)
+
+html_table = salida_filtrada.style.apply(color_row, axis=1).format({
+    "KM_RECORRIDOS": "{:.2f}",
+    "LITROS_TOTALES": "{:.2f}",
+    "CONSUMO_REAL_L_100KM": "{:.2f}",
+    "CONSUMO_TEORICO_L_100KM": "{:.2f}",
+    "LITROS_TEOREICOS_ESPERADOS": "{:.2f}",
+    "DESVIO_LITROS": "{:.2f}",
+    "DESVIO_PCT": "{:.1%}"
+}).to_html()
+
+st.markdown(html_table, unsafe_allow_html=True)
+
+# --- Botones de exportación ---
+st.subheader("📥 Exportar datos")
+
+buffer_excel = BytesIO()
+salida_filtrada.to_excel(buffer_excel, index=False, engine="openpyxl")
+buffer_excel.seek(0)
+
+st.download_button("📘 Descargar Excel", data=buffer_excel, file_name="control_consumo.xlsx")
+
+csv_data = salida_filtrada.to_csv(index=False, sep=";", decimal=",").encode("utf-8")
+st.download_button("📄 Descargar CSV", data=csv_data, file_name="control_consumo.csv")
+
+# --- Resumen ---
+st.subheader("📊 Resumen de estados")
+
+resumen = salida_filtrada["ESTADO"].value_counts().rename_axis("Estado").reset_index(name="Cantidad")
+
+orden = ["FUERA", "DUDOSO", "OK", "FALTA CARGA", "ERROR DE KM", "SIN MOVIMIENTO", "SIN DATOS"]
+resumen["orden"] = resumen["Estado"].apply(lambda x: orden.index(x))
+resumen = resumen.sort_values("orden")
+
+colores_estado = {
+    "FUERA": "🔴",
+    "DUDOSO": "🔵",
+    "OK": "🟢",
+    "FALTA CARGA": "🟣",
+    "ERROR DE KM": "⚠️",
+    "SIN MOVIMIENTO": "⚪",
+    "SIN DATOS": "🟡"
+}
+
+for _, row in resumen.iterrows():
+    st.markdown(f"### {colores_estado[row['Estado']]} **{row['Estado']} → {row['Cantidad']}**")
