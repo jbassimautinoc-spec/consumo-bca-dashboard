@@ -83,56 +83,6 @@ if not st.session_state["autenticado"]:
     st.stop()  # 🔥 BLOQUEA TODO EL DASHBOARD SI NO SE LOGUEÓ
 
 
-# ==========================
-# AUTENTICACIÓN POR EMAIL + CÓDIGO (ÚNICA)
-# ==========================
-
-USUARIOS_PERMITIDOS = {
-    "ycarriego@grupobca.com.ar": 8521,
-    "aescobar@grupobca.com.ar": 9514,
-    "oscarsaavedra01@gmail.com": 1322,
-    "jptermite@grupobca.com.ar": 3695,
-    "mcabo@grupobca.com.ar": 2002,
-    "jbassi@grupobca.com.ar": 1304,
-    "mmanresa@grupobca.com.ar": 1045,
-    "dloillet@grupobca.com.ar": 2287,
-}
-
-# Inicializar variable de sesión
-if "autenticado" not in st.session_state:
-    st.session_state["autenticado"] = False
-
-# Pantalla de login si NO está autenticado
-if not st.session_state["autenticado"]:
-    st.markdown(
-        """
-        <h2 style="text-align:center; margin-bottom:0;">
-            Acceso al Panel de Consumo BCA
-        </h2>
-        <p style="text-align:center; margin-top:4px; color:gray;">
-            Ingrese su correo corporativo y código personal de acceso.
-        </p>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    col_login1, col_login2, col_login3 = st.columns([1, 2, 1])
-    with col_login2:
-        email = st.text_input("Correo corporativo:", key="login_email")
-        codigo = st.text_input("Código de acceso:", type="password", key="login_codigo")
-
-        if st.button("Ingresar", type="primary"):
-            email_norm = email.strip().lower()
-            if email_norm in USUARIOS_PERMITIDOS and str(codigo) == str(
-                USUARIOS_PERMITIDOS[email_norm]
-            ):
-                st.session_state["autenticado"] = True
-                st.success("Acceso concedido. Bienvenido.")
-                st.experimental_rerun()
-            else:
-                st.error("Correo o código incorrecto. Verifique e intente nuevamente.")
-
-    st.stop()  # 🔥 BLOQUEA TODO EL DASHBOARD SI NO SE LOGUEÓ
 
 # ==========================
 # CONFIGURACIÓN GENERAL DE DATOS
