@@ -1,7 +1,7 @@
 import streamlit as st
 
 # ==========================
-# AUTENTICACIÓN POR EMAIL + CÓDIGO
+# AUTENTICACIÓN
 # ==========================
 
 USUARIOS_PERMITIDOS = {
@@ -15,13 +15,10 @@ USUARIOS_PERMITIDOS = {
     "dloillet@grupobca.com.ar": 2287
 }
 
-# Inicializar variable de sesión
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
-# --- BLOQUE DE LOGIN ---
 if not st.session_state.autenticado:
-
     st.title("Acceso al Panel de Consumo BCA")
 
     email = st.text_input("Correo institucional")
@@ -32,10 +29,9 @@ if not st.session_state.autenticado:
             st.session_state.autenticado = True
             st.rerun()
         else:
-            st.error("Correo o código incorrecto.")
+            st.error("Correo o código incorrecto")
 
-    st.stop()   # 👈 Esto bloquea el resto del dashboard sin romper el DOM
-
+    st.stop()   # 🔥 BLOQUEA TODO EL CÓDIGO DE ABAJO
 
 # ==========================
 # IMPORTS DEL DASHBOARD
@@ -48,7 +44,6 @@ import re
 import altair as alt
 import os
 
-# PDF
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 )
@@ -59,16 +54,28 @@ from reportlab.lib.units import cm
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 
-# ==========================
-# CONFIGURACIÓN GENERAL
-# ==========================
-
+# AQUÍ RECIÉN empieza el dashboard.
+# NADA antes del login.
 
 TOLERANCIA_PCT = 0.10
 
 FILE_CONSUMO = "consumo_real.xlsx"
-FILE_KM = "distances_26-11 al 03-12.xlsx"   # ajustá el nombre si cambia
+FILE_KM = "distances_26-11 al 03-12.xlsx"
 FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+
+COLOR_PRINCIPAL = "#006778"
+COLOR_SECUNDARIO = "#009999"
+
+# ==========================
+# 1) CARGA DE ARCHIVOS (YA NO FALLA)
+# ==========================
+
+df_cons = pd.read_excel(FILE_CONSUMO)
+df_km = pd.read_excel(FILE_KM)
+df_nom = pd.read_excel(FILE_NOMINA)
+
+# ... y el resto de tu dashboard sigue igual
+
 
 COLOR_PRINCIPAL = "#006778"   # BCA aprox
 COLOR_SECUNDARIO = "#009999"  # BCA aprox
