@@ -1,3 +1,42 @@
+
+# ==========================
+# AUTENTICACIÓN POR EMAIL + CÓDIGO
+# ==========================
+
+import streamlit as st
+
+USUARIOS_PERMITIDOS = {
+    "ycarriego@grupobca.com.ar": 8521,
+    "aescobar@grupobca.com.ar": 9514,
+    "oscarsaavedra01@gmail.com": 1322,
+    "jptermite@grupobca.com.ar": 3695,
+    "mcabo@grupobca.com.ar": 2002,
+    "jbassi@grupobca.com.ar": 1304,
+    "mmanresa@grupobca.com.ar": 1045,
+    "dloillet@grupobca.com.ar": 2287
+}
+
+# Inicializar variable de sesión
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+# Pantalla de login si NO está autenticado
+if not st.session_state["autenticado"]:
+    st.header("Acceso al Panel de Consumo BCA")
+
+    email = st.text_input("Ingrese su correo corporativo:")
+    codigo = st.text_input("Ingrese su código de acceso:", type="password")
+
+    if st.button("Ingresar"):
+        if email in USUARIOS_PERMITIDOS and str(codigo) == str(USUARIOS_PERMITIDOS[email]):
+            st.session_state["autenticado"] = True
+            st.success("Acceso concedido. Bienvenido.")
+            st.experimental_rerun()
+        else:
+            st.error("Correo o código incorrecto.")
+
+    st.stop()  # 🔥 BLOQUEA TODO EL DASHBOARD
+
 import pandas as pd
 import numpy as np
 import streamlit as st
