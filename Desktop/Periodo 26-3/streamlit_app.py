@@ -1,8 +1,36 @@
 # ==========================
-# AUTENTICACIÓN POR EMAIL + CÓDIGO
+# CONTROL INTELIGENTE DE CONSUMO – GRUPO BCA
+# Versión con login por email + código y layout estable
 # ==========================
 
 import streamlit as st
+import pandas as pd
+import numpy as np
+from io import BytesIO
+import re
+import altair as alt
+import os
+
+# PDF / ReportLab
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+)
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, landscape, portrait
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.graphics.shapes import Drawing, Rect
+from reportlab.graphics.charts.barcharts import VerticalBarChart
+
+# ==========================
+# CONFIGURACIÓN DE PÁGINA (TIENE QUE SER LO PRIMERO DE STREAMLIT)
+# ==========================
+
+st.set_page_config(page_title="Control inteligente de consumo", layout="wide")
+
+# ==========================
+# AUTENTICACIÓN POR EMAIL + CÓDIGO
+# ==========================
 
 USUARIOS_PERMITIDOS = {
     "ycarriego@grupobca.com.ar": 8521,
@@ -18,6 +46,8 @@ USUARIOS_PERMITIDOS = {
 # Inicializar variable de sesión
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
+if "correo_autenticado" not in st.session_state:
+    st.session_state["correo_autenticado"] = ""
 
 # Pantalla de login si NO está autenticado
 if not st.session_state["autenticado"]:
@@ -27,38 +57,16 @@ if not st.session_state["autenticado"]:
     codigo = st.text_input("Ingrese su código de acceso:", type="password")
 
     if st.button("Ingresar"):
-        if email in USUARIOS_PERMITIDOS and str(codigo) == str(USUARIOS_PERMITIDOS[email]):
+        email_norm = email.strip().lower()
+        if email_norm in USUARIOS_PERMITIDOS and str(codigo) == str(USUARIOS_PERMITIDOS[email_norm]):
             st.session_state["autenticado"] = True
+            st.session_state["correo_autenticado"] = email_norm
             st.success("Acceso concedido. Bienvenido.")
-            st.rerun()
+            st.experimental_rerun()
         else:
             st.error("Correo o código incorrecto.")
 
-    st.stop()  # 🔥 BLOQUEA TODO EL DASHBOARD
-
-
-# ==========================
-# IMPORTS
-# ==========================
-
-import pandas as pd
-import numpy as np
-from io import BytesIO
-import re
-import altair as alt
-import os
-
-# PDF
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
-)
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter, landscape, portrait
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.graphics.shapes import Drawing, Rect
-from reportlab.graphics.charts.barcharts import VerticalBarChart
-
+    st.stop()  # Bloquea todo el dashboard si no pasó el login
 
 # ==========================
 # CONFIGURACIÓN GENERAL
@@ -72,7 +80,6 @@ FILE_NOMINA = "Nomina_consumo_camion.xlsx"
 
 COLOR_PRINCIPAL = "#006778"   # BCA aprox
 COLOR_SECUNDARIO = "#009999"  # BCA aprox
-
 
 # ==========================
 # FUNCIONES AUXILIARES
@@ -175,28 +182,31 @@ def recomendaciones_automaticas(normal, auditar, dudoso, sin_datos, total):
     if pct_auditar > 20:
         recs.append(
             "Alto porcentaje de unidades en estado A AUDITAR. "
-            "Priorizar revisión de estas unidades: consumo, rutas y condiciones de operación."
+            "Se recomienda priorizar la revisión de estas unidades, verificando consumo, rutas y condiciones de operación."
         )
 
     if pct_dudoso > 10:
         recs.append(
-            "Unidades en estado DUDOSO con consumos inusualmente bajos. "
-            "Revisar carga de kilómetros, integridad de odómetro y registros GPS."
+            "Existe un número relevante de unidades en estado DUDOSO, con consumos inusualmente bajos. "
+            "Se sugiere revisar la carga de kilómetros, integridad de datos de odómetro y registros GPS."
         )
 
     if pct_normal >= 70:
         recs.append(
-            "Mayoría en estado NORMAL. Mantener procedimientos actuales de operación y monitoreo."
+            "La mayoría de las unidades se encuentra en estado NORMAL. "
+            "Se recomienda mantener los procedimientos actuales de operación y monitoreo."
         )
 
     if pct_sin_datos > 0:
         recs.append(
-            "Hay unidades en estado SIN DATOS. Completar registros de consumo y kilometraje."
+            "Hay unidades en estado SIN DATOS. "
+            "Conviene revisar los registros de consumo y kilometraje para completar la información."
         )
 
     if not recs:
         recs.append(
-            "Situación intermedia. Monitorear semanalmente y revisar unidades con desvíos."
+            "La situación general es intermedia. "
+            "Se recomienda monitorear semanalmente y revisar puntualmente las unidades con desvíos."
         )
 
     return recs
@@ -209,11 +219,6 @@ def recomendaciones_automaticas(normal, auditar, dudoso, sin_datos, total):
 df_cons = pd.read_excel(FILE_CONSUMO)
 df_km = pd.read_excel(FILE_KM)
 df_nom = pd.read_excel(FILE_NOMINA)
-
-# Renombrar la columna correcta si existe
-if "LITROS UNIDADES" in df_cons.columns:
-    df_cons = df_cons.rename(columns={"LITROS UNIDADES": "LITROS"})
-
 
 # ==========================
 # 2) NORMALIZAR NOMBRES
@@ -241,7 +246,6 @@ if not possible_names:
 consumo_col = possible_names[0]
 df_nom = df_nom.rename(columns={consumo_col: "LITROS_100KM"})
 
-
 # ==========================
 # 3) LIMPIEZA Y VALIDACIÓN
 # ==========================
@@ -254,16 +258,13 @@ df_cons["PATENTE"] = df_cons["PATENTE"].astype(str).str.upper().str.strip()
 df_km["PATENTE"] = df_km["PATENTE"].astype(str).str.upper().str.strip()
 df_nom["PATENTE"] = df_nom["PATENTE"].astype(str).str.upper().str.strip()
 
-# (Opcional) DataFrames de patentes inválidas, por si querés auditar afuera
 df_cons_invalidas = df_cons[~df_cons["PATENTE"].apply(es_patente_valida)]
 df_km_invalidas   = df_km[~df_km["PATENTE"].apply(es_patente_valida)]
 df_nom_invalidas  = df_nom[~df_nom["PATENTE"].apply(es_patente_valida)]
 
-# Filtrar válidas
 df_cons = df_cons[df_cons["PATENTE"].apply(es_patente_valida)]
 df_km   = df_km[df_km["PATENTE"].apply(es_patente_valida)]
 df_nom  = df_nom[df_nom["PATENTE"].apply(es_patente_valida)]
-
 
 # ==========================
 # 4) AGRUPACIÓN
@@ -271,7 +272,6 @@ df_nom  = df_nom[df_nom["PATENTE"].apply(es_patente_valida)]
 
 df_litros_total = df_cons.groupby("PATENTE", as_index=False)["LITROS"].sum().rename(columns={"LITROS": "LITROS_TOTALES"})
 df_km_total = df_km.groupby("PATENTE", as_index=False)["KM_RECORRIDOS"].sum()
-
 
 # ==========================
 # 5) UNIFICACIÓN
@@ -286,7 +286,6 @@ df_final = pd.merge(df_final, df_nom[cols_nom], on="PATENTE", how="left")
 
 df_final["KM_RECORRIDOS"] = df_final["KM_RECORRIDOS"].fillna(0)
 df_final["LITROS_TOTALES"] = df_final["LITROS_TOTALES"].fillna(0)
-
 
 # ==========================
 # 6) CÁLCULOS
@@ -310,7 +309,6 @@ df_final["DESVIO_PCT"] = np.where(
 
 df_final["MIN_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 - TOLERANCIA_PCT)
 df_final["MAX_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 + TOLERANCIA_PCT)
-
 
 # ==========================
 # 7) ESTADOS
@@ -342,12 +340,11 @@ salida = df_final[[
     "COLOR"
 ]].sort_values(["MODELO", "PATENTE"])
 
-
 # ==========================
-# 8) STREAMLIT – LAYOUT
+# 8) LAYOUT – HEADER
 # ==========================
 
-st.set_page_config(page_title="Control inteligente de consumo", layout="wide")
+st.sidebar.success(f"Usuario autenticado: {st.session_state['correo_autenticado']}")
 
 # Encabezado corporativo
 header_col1, header_col2 = st.columns([1, 4])
@@ -381,9 +378,12 @@ with header_col2:
         unsafe_allow_html=True
     )
 
-# Espaciado visual debajo del encabezado
-st.markdown("<div style='height:35px;'></div>", unsafe_allow_html=True)
-
+st.markdown(
+    """
+    <div style="height:35px;"></div>
+    """,
+    unsafe_allow_html=True
+)
 
 # ==========================
 # 9) FILTROS
@@ -408,7 +408,6 @@ if modelo_sel != "TODOS":
 salida_filtrada = salida_filtrada[salida_filtrada["ESTADO"].isin(estado_sel)]
 salida_filtrada = salida_filtrada.sort_values(by=columna_orden, ascending=asc)
 
-
 # ==========================
 # 10) KPIs
 # ==========================
@@ -430,7 +429,6 @@ with k3:
     st.markdown(kpi_card("Dudoso", dudoso, "#1565c0"), unsafe_allow_html=True)
 with k4:
     st.markdown(kpi_card("% Normal", f"{pct_normal:.1f}%", COLOR_SECUNDARIO), unsafe_allow_html=True)
-
 
 # ==========================
 # 11) GRÁFICO — DISTRIBUCIÓN DE ESTADOS
@@ -457,7 +455,11 @@ if not salida_filtrada.empty:
                 "Estado:N",
                 sort=None,
                 title="Estado",
-                axis=alt.Axis(labelAngle=0, labelFontSize=14, titleFontSize=14)
+                axis=alt.Axis(
+                    labelAngle=0,
+                    labelFontSize=14,
+                    titleFontSize=14
+                )
             ),
             y=alt.Y("Cantidad:Q", title="Cantidad"),
             tooltip=["Estado", "Cantidad"]
@@ -466,12 +468,21 @@ if not salida_filtrada.empty:
 
     labels = (
         alt.Chart(resumen_est)
-        .mark_text(align="center", baseline="bottom", dy=-2, fontSize=14, color=bar_color)
-        .encode(x="Estado:N", y="Cantidad:Q", text="Cantidad:Q")
+        .mark_text(
+            align="center",
+            baseline="bottom",
+            dy=-2,
+            fontSize=14,
+            color=bar_color
+        )
+        .encode(
+            x="Estado:N",
+            y="Cantidad:Q",
+            text="Cantidad:Q"
+        )
     )
 
     st.altair_chart(chart_barras + labels, use_container_width=True)
-
 
 # ==========================
 # 12) TABLA DETALLADA
@@ -479,11 +490,7 @@ if not salida_filtrada.empty:
 
 st.subheader("Detalle por unidad")
 
-# Evitar objetos no soportados en tabla
-if "COLOR" in salida_filtrada.columns:
-    salida_filtrada = salida_filtrada.drop(columns=["COLOR"])
-
-styled_df = salida_filtrada.style.apply(color_row, axis=1).format({
+html_table = salida_filtrada.style.apply(color_row, axis=1).format({
     "KM_RECORRIDOS": "{:.2f}",
     "LITROS_TOTALES": "{:.2f}",
     "CONSUMO_REAL_L_100KM": "{:.2f}",
@@ -491,11 +498,9 @@ styled_df = salida_filtrada.style.apply(color_row, axis=1).format({
     "LITROS_TEOREICOS_ESPERADOS": "{:.2f}",
     "DESVIO_LITROS": "{:.2f}",
     "DESVIO_PCT": "{:.1%}"
-})
+}).to_html()
 
-# ✅ Sin caracteres sueltos después
-st.dataframe(styled_df, use_container_width=True)
-
+st.markdown(html_table, unsafe_allow_html=True)
 
 # ==========================
 # 13) EXPORTACIÓN EXCEL / CSV
@@ -510,7 +515,6 @@ st.download_button("📘 Descargar Excel", data=buffer_excel, file_name="control
 
 csv_data = salida_filtrada.to_csv(index=False, sep=";", decimal=",").encode("utf-8")
 st.download_button("📄 Descargar CSV", data=csv_data, file_name="control_consumo.csv")
-
 
 # ==========================
 # 14) EXPORTACIÓN A PDF PREMIUM
@@ -527,10 +531,13 @@ COLOR_ESTADO_HEX = {
     "SIN DATOS": "#FFEB3B"      # amarillo
 }
 
+
 def cuadrado_color(color_hex, size=8):
+    """Devuelve un pequeño cuadrito de color para usar en la tabla del PDF."""
     d = Drawing(size, size)
     d.add(Rect(0, 0, size, size, fillColor=colors.HexColor(color_hex), strokeWidth=0))
     return d
+
 
 def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resumen_est):
     buffer = BytesIO()
@@ -538,6 +545,7 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
     total = len(df)
     num_cols = len(df.columns)
 
+    # Orientación automática según ancho (cantidad de columnas)
     pagesize = landscape(letter) if num_cols > 8 else portrait(letter)
 
     doc = SimpleDocTemplate(
@@ -552,21 +560,37 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
     estilos = getSampleStyleSheet()
     story = []
 
-    # Portada
+    # ==========================
+    # HOJA 1 – PORTADA + KPI + GRÁFICO
+    # ==========================
+
+    # Logo
     if "logo_encontrado" in globals() and logo_encontrado:
         img = Image(logo_encontrado, width=4*cm, height=4*cm)
         img.hAlign = "CENTER"
         story.append(img)
         story.append(Spacer(1, 10))
 
+    # Título principal
     story.append(Paragraph("<b>Control inteligente de consumo – Grupo BCA</b>", estilos["Title"]))
     story.append(Spacer(1, 8))
-    story.append(Paragraph("Reporte técnico generado a partir de los datos filtrados en el tablero semanal.", estilos["Normal"]))
+
+    # Subtítulo / objetivo
+    story.append(Paragraph(
+        "Reporte técnico generado a partir de los datos filtrados en el tablero semanal.",
+        estilos["Normal"]
+    ))
     story.append(Spacer(1, 6))
-    story.append(Paragraph("Este informe resume el desempeño de consumo real versus consumo teórico por unidad y modelo.", estilos["Normal"]))
+
+    # Breve introducción
+    story.append(Paragraph(
+        "Este informe resume el desempeño de consumo real versus consumo teórico por unidad y modelo, "
+        "permitiendo identificar desvíos operativos, oportunidades de mejora y posibles inconsistencias de datos.",
+        estilos["Normal"]
+    ))
     story.append(Spacer(1, 18))
 
-    # KPIs
+    # KPIs principales
     story.append(Paragraph("<b>Indicadores principales</b>", estilos["Heading2"]))
     story.append(Spacer(1, 6))
     story.append(Paragraph(f"• Unidades en estado NORMAL: {normal}", estilos["Normal"]))
@@ -576,7 +600,7 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
     story.append(Paragraph(f"• Porcentaje de unidades NORMAL: {pct_normal:.1f}%", estilos["Normal"]))
     story.append(Spacer(1, 16))
 
-    # Gráfico estados
+    # Gráfico de estados
     if resumen_est is not None and not resumen_est.empty:
         res = resumen_est.copy()
         data_vals = res["Cantidad"].tolist()
@@ -587,6 +611,7 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
 
         drawing_width = doc.width
         drawing_height = 180
+
         drawing = Drawing(drawing_width, drawing_height)
 
         bc = VerticalBarChart()
@@ -594,34 +619,47 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
         bc.y = 30
         bc.width = drawing_width - 80
         bc.height = 120
+
         bc.data = [data_vals]
         bc.categoryAxis.categoryNames = categorias
         bc.categoryAxis.labels.angle = 0
         bc.categoryAxis.labels.dy = -8
         bc.categoryAxis.labels.fontSize = 8
+
         bc.valueAxis.valueMin = 0
         bc.bars[0].fillColor = colors.HexColor("#009999")
+
         bc.barLabelFormat = "%d"
         bc.barLabels.fontSize = 8
         bc.barLabels.dy = -3
 
         drawing.add(bc)
+
         story.append(drawing)
         story.append(Spacer(1, 12))
 
+    # Mini resumen de estados (texto)
+    if resumen_est is not None and not resumen_est.empty:
         story.append(Paragraph("<b>Resumen por estado</b>", estilos["Heading3"]))
         story.append(Spacer(1, 4))
         for _, r in resumen_est.iterrows():
-            story.append(Paragraph(f"• {r['Estado']}: {r['Cantidad']} unidades", estilos["Normal"]))
+            story.append(Paragraph(
+                f"• {r['Estado']}: {r['Cantidad']} unidades",
+                estilos["Normal"]
+            ))
 
     story.append(PageBreak())
 
-    # Detalle y recomendaciones
+    # ==========================
+    # HOJA 2 – TOP 5 + RECOMENDACIONES + TABLA
+    # ==========================
+
     story.append(Paragraph("<b>Informe técnico – detalle de unidades</b>", estilos["Heading2"]))
     story.append(Spacer(1, 10))
 
     df_sorted = df.sort_values(["MODELO", "PATENTE"], na_position="last").copy()
 
+    # Top 5 unidades críticas (A AUDITAR)
     story.append(Paragraph("<b>Top 5 unidades con mayor desvío positivo (A AUDITAR)</b>", estilos["Heading3"]))
     story.append(Spacer(1, 6))
 
@@ -629,7 +667,10 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
     top5 = df_crit.head(5)
 
     if top5.empty:
-        story.append(Paragraph("No se detectaron unidades en estado A AUDITAR dentro del conjunto filtrado.", estilos["Normal"]))
+        story.append(Paragraph(
+            "No se detectaron unidades en estado A AUDITAR dentro del conjunto filtrado.",
+            estilos["Normal"]
+        ))
     else:
         for i, r in enumerate(top5.itertuples(), start=1):
             patente = getattr(r, "PATENTE", "")
@@ -645,6 +686,8 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
             story.append(Paragraph(texto, estilos["Normal"]))
 
     story.append(Spacer(1, 14))
+
+    # Recomendaciones automáticas
     story.append(Paragraph("<b>Recomendaciones automáticas</b>", estilos["Heading3"]))
     story.append(Spacer(1, 6))
 
@@ -653,6 +696,8 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
         story.append(Paragraph("• " + r, estilos["Normal"]))
 
     story.append(Spacer(1, 18))
+
+    # Tabla detallada
     story.append(Paragraph("<b>Detalle de unidades (tabla filtrada)</b>", estilos["Heading3"]))
     story.append(Spacer(1, 6))
 
@@ -666,7 +711,7 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
                    "LITROS_TEOREICOS_ESPERADOS", "DESVIO_LITROS"]:
             return f"{val:.2f}"
         if col == "DESVIO_PCT":
-            return f"{val*100:.1f}%"
+            return f"{val*100:.1f}%"  # porcentaje
         return str(val)
 
     columnas = [
@@ -677,7 +722,9 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
     ]
     columnas = [c for c in columnas if c in df_pdf.columns]
 
-    tabla_data = [columnas]
+    tabla_data = []
+    tabla_data.append(columnas)
+
     for _, row in df_pdf.iterrows():
         fila = []
         for col in columnas:
@@ -693,6 +740,7 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
     col_width = doc.width / col_count if col_count > 0 else doc.width
 
     tabla = Table(tabla_data, repeatRows=1, colWidths=[col_width] * col_count)
+
     tabla.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#006778")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -708,7 +756,10 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
     story.append(tabla)
     story.append(Spacer(1, 18))
 
-    # Análisis ejecutivo
+    # ==========================
+    # HOJA FINAL – ANÁLISIS TÉCNICO
+    # ==========================
+
     story.append(PageBreak())
     story.append(Paragraph("<b>Análisis ejecutivo técnico del consumo</b>", estilos["Heading2"]))
     story.append(Spacer(1, 10))
@@ -725,6 +776,7 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
             df_aud = df[df["ESTADO"] == "A AUDITAR"]
             if not df_aud.empty:
                 modelo_mayor_incidente = df_aud["MODELO"].value_counts().idxmax()
+
             df_dud = df[df["ESTADO"] == "DUDOSO"]
             if not df_dud.empty:
                 modelo_dudoso_principal = df_dud["MODELO"].value_counts().idxmax()
@@ -743,22 +795,43 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
         prom_teo_aud = promedio_seguro(df_aud, "CONSUMO_TEORICO_L_100KM")
 
         texto1 = (
-            f"El conjunto analizado muestra un {pct_normal:.1f}% en estado NORMAL, "
-            f"{pct_auditar:.1f}% en A AUDITAR y {pct_dudoso:.1f}% en DUDOSO."
+            f"El conjunto analizado muestra un {pct_normal:.1f}% de unidades en estado NORMAL, "
+            f"mientras que un {pct_auditar:.1f}% se encuentra en estado A AUDITAR y un "
+            f"{pct_dudoso:.1f}% en estado DUDOSO. "
+            "Esta distribución refleja una flota con un núcleo estable de desempeño, "
+            "pero con un volumen relevante de unidades que exceden el consumo esperado."
         )
+
         texto2 = (
-            f"Grupo NORMAL: {prom_real_norm:.1f} L/100km vs {prom_teo_norm:.1f} teórico. "
-            f"Grupo A AUDITAR: {prom_real_aud:.1f} L/100km vs {prom_teo_aud:.1f} teórico."
+            f"En el grupo NORMAL, el consumo medio se ubica en torno a "
+            f"{prom_real_norm:.1f} L/100km frente a un teórico de {prom_teo_norm:.1f} L/100km, "
+            "lo que indica un comportamiento alineado a los parámetros de referencia. "
+            f"En contraste, las unidades en estado A AUDITAR presentan un consumo medio de "
+            f"{prom_real_aud:.1f} L/100km versus {prom_teo_aud:.1f} L/100km teóricos, "
+            "configurando un desvío sistemático que justifica investigación operativa."
         )
+
         texto3 = (
-            f"Desvíos concentrados en el modelo {modelo_mayor_incidente} (A AUDITAR). "
-            f"DUDOSO focalizado en {modelo_dudoso_principal}."
+            f"Los desvíos se concentran principalmente en el modelo {modelo_mayor_incidente} "
+            "dentro del grupo A AUDITAR, lo que sugiere revisar calibración, condiciones de carga, "
+            "topografía recorrida y hábitos de conducción asociados. "
+            f"En paralelo, el estado DUDOSO, con un {pct_dudoso:.1f}% de unidades, se focaliza en el modelo "
+            f"{modelo_dudoso_principal}, indicando posible subregistro de kilómetros o datos incompletos de GPS."
         )
-        texto4 = (
-            f"Un {pct_sin_datos:.1f}% está SIN DATOS. Completar registros mejorará la precisión analítica."
-            if pct_sin_datos > 0 else
-            "No hay unidades SIN DATOS en el filtrado actual."
-        )
+
+        if pct_sin_datos > 0:
+            texto4 = (
+                f"El {pct_sin_datos:.1f}% de unidades en estado SIN DATOS reduce la capacidad analítica del modelo. "
+                "A medida que se incorporen más días de operación con registros completos de kilómetros y combustible, "
+                "los indicadores tenderán a estabilizarse y permitirán una evaluación más fina de la eficiencia "
+                "por ruta, modelo y patrón de uso."
+            )
+        else:
+            texto4 = (
+                "Actualmente no se registran unidades en estado SIN DATOS, lo que refuerza la calidad de la base de "
+                "información. A medida que se incorporen más días de operación, será posible afinar todavía más la "
+                "evaluación de eficiencia por ruta, modelo y patrón de uso."
+            )
 
         story.append(Paragraph(texto1, estilos["Normal"]))
         story.append(Spacer(1, 6))
@@ -769,14 +842,21 @@ def generar_pdf_premium(df, normal, auditar, dudoso, sin_datos, pct_normal, resu
         story.append(Paragraph(texto4, estilos["Normal"]))
         story.append(Spacer(1, 12))
     else:
-        story.append(Paragraph("No hay datos en el conjunto filtrado.", estilos["Normal"]))
+        story.append(Paragraph(
+            "No se generó análisis técnico debido a la ausencia de datos en el conjunto filtrado.",
+            estilos["Normal"]
+        ))
         story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Sistema de Control Inteligente de Consumo – Grupo BCA", estilos["Normal"]))
+    story.append(Paragraph(
+        "Sistema de Control Inteligente de Consumo – Grupo BCA",
+        estilos["Normal"]
+    ))
 
     doc.build(story)
     buffer.seek(0)
     return buffer
+
 
 pdf_buffer = generar_pdf_premium(
     salida_filtrada,
@@ -794,7 +874,6 @@ st.download_button(
     file_name="control_consumo_bca.pdf",
     mime="application/pdf"
 )
-
 
 # ==========================
 # 15) RESUMEN DE ESTADOS (DASHBOARD)
