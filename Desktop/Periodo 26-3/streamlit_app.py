@@ -486,11 +486,12 @@ if not salida_filtrada.empty:
 # ======================================================
 st.subheader("Detalle por unidad")
 
-# 🔧 Streamlit no soporta emojis ni objetos en tablas HTML → los quitamos
+# 🔧 Eliminamos la columna COLOR que genera conflicto en tablas HTML/React
 if "COLOR" in salida_filtrada.columns:
     salida_filtrada = salida_filtrada.drop(columns=["COLOR"])
 
-html_table = salida_filtrada.style.apply(color_row, axis=1).format({
+# 🟩 USAMOS st.dataframe EN VEZ DE HTML — sin errores removeChild
+styled_df = salida_filtrada.style.apply(color_row, axis=1).format({
     "KM_RECORRIDOS": "{:.2f}",
     "LITROS_TOTALES": "{:.2f}",
     "CONSUMO_REAL_L_100KM": "{:.2f}",
@@ -498,9 +499,9 @@ html_table = salida_filtrada.style.apply(color_row, axis=1).format({
     "LITROS_TEOREICOS_ESPERADOS": "{:.2f}",
     "DESVIO_LITROS": "{:.2f}",
     "DESVIO_PCT": "{:.1%}"
-}).to_html()
+})
 
-st.markdown(html_table, unsafe_allow_html=True)
+st.dataframe(styled_df, use_container_width=True)
 
 
 # ==========================
