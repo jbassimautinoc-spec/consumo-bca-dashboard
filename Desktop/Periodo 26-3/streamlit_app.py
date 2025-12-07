@@ -503,7 +503,6 @@ styled_df = salida_filtrada.style.apply(color_row, axis=1).format({
 
 st.dataframe(styled_df, use_container_width=True)
 
-
 # ==========================
 # 13) EXPORTACIÓN EXCEL / CSV
 # ==========================
