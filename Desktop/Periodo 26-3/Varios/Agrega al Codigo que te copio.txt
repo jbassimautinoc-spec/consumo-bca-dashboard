@@ -1,0 +1,24 @@
+Agrega al Codigo que te copio :
+
+1-Cantidad de toneladas por camión :
+Camión con menor promedio de toneladas cargadas, con la condición que el campo remito tiene q estar cargado.
+
+2-Cantidad de viajes de arena , pero diferenciando el origen de carga.
+
+3-Agregar al grafico filtro por patentes y chofer
+
+4-genera ranking de unidades por cantidad de viajes arena y poner una etiqueta de unidades con la opción de listar las patentes.
+Cantidad de viajes de arena:
+
+mayor a 7 optimo
+entre 5 a 7 medio.
+menor a 5 bajo
+
+Potencia o propone cosas que se me allán pasado.
+
+
+
+ 
+
+
+

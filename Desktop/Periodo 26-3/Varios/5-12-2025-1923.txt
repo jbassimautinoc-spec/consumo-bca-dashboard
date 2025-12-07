@@ -1,0 +1,428 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+from io import BytesIO
+import re
+import altair as alt
+import os
+
+# ==========================
+# CONFIGURACIÓN GENERAL
+# ==========================
+
+TOLERANCIA_PCT = 0.10
+
+FILE_CONSUMO = "consumo_real.xlsx"
+FILE_KM = "distances_26-11 al 03-12.xlsx"
+FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+
+COLOR_PRINCIPAL = "#006778"  # BCA 315C aprox
+COLOR_SECUNDARIO = "#009999" # BCA 7717C aprox
+
+
+# ==========================
+# FUNCIONES AUXILIARES
+# ==========================
+
+def es_patente_valida(p):
+    """Valida patentes argentinas formato viejo AAA123 o nuevo AA123BB."""
+    if pd.isna(p):
+        return False
+    p = str(p).strip().upper()
+    formato_viejo = r'^[A-Z]{3}[0-9]{3}$'         # ABC123
+    formato_nuevo = r'^[A-Z]{2}[0-9]{3}[A-Z]{2}$' # AB123CD
+    return bool(re.match(formato_viejo, p) or re.match(formato_nuevo, p))
+
+
+def to_num_col(s):
+    return pd.to_numeric(
+        s.astype(str).str.replace(",", ".", regex=False),
+        errors="coerce"
+    )
+
+
+def clasificar_estado(row):
+    km = row["KM_RECORRIDOS"]
+    litros = row["LITROS_TOTALES"]
+    cons_real = row["CONSUMO_REAL_L_100KM"]
+    cons_teor = row["CONSUMO_TEORICO_L_100KM"]
+    min_ok = row["MIN_OK"]
+    max_ok = row["MAX_OK"]
+
+    if km == 0 and litros == 0:
+        return "SIN MOVIMIENTO"
+    if km > 0 and litros == 0:
+        return "FALTA CARGA"
+    if km == 0 and litros > 0:
+        return "ERROR DE KM"
+    if pd.isna(cons_real) or pd.isna(cons_teor):
+        return "SIN DATOS"
+
+    limite_mejor_15 = cons_teor * 0.85
+    if cons_real < limite_mejor_15:
+        return "DUDOSO"
+
+    if min_ok <= cons_real <= max_ok:
+        return "NORMAL"
+
+    if limite_mejor_15 <= cons_real < min_ok:
+        return "NORMAL"
+
+    if cons_real > max_ok:
+        return "A AUDITAR"
+
+    return "SIN DATOS"
+
+
+def color_row(row):
+    estado = row["ESTADO"]
+    if estado == "NORMAL":
+        color = "#dcedc8"   # verde suave
+    elif estado == "A AUDITAR":
+        color = "#ffcdd2"   # rojo suave
+    elif estado == "DUDOSO":
+        color = "#bbdefb"   # celeste
+    else:
+        color = "#fff9c4"   # amarillo suave
+    return [f"background-color:{color}"] * len(row)
+
+
+def kpi_card(label, value, color_bg, color_text="#ffffff"):
+    return f"""
+    <div style="background-color:{color_bg};
+                padding:16px;
+                border-radius:12px;
+                text-align:center;
+                box-shadow:0 2px 6px rgba(0,0,0,0.15);">
+        <div style="font-size:14px;color:{color_text};margin-bottom:4px;">
+            {label}
+        </div>
+        <div style="font-size:24px;font-weight:bold;color:{color_text};">
+            {value}
+        </div>
+    </div>
+    """
+
+
+# ==========================
+# 1) CARGA DE ARCHIVOS
+# ==========================
+
+df_cons = pd.read_excel(FILE_CONSUMO)
+df_km = pd.read_excel(FILE_KM)
+df_nom = pd.read_excel(FILE_NOMINA)
+
+# ==========================
+# 2) NORMALIZAR NOMBRES
+# ==========================
+
+df_cons = df_cons.rename(columns={
+    "IDENTIFICACIONTARJETA": "PATENTE",
+    "LITROS UNIDADES": "LITROS"
+})
+df_km = df_km.rename(columns={
+    "Placa/Patente": "PATENTE",
+    "Distancia [km]": "KM_RECORRIDOS"
+})
+
+df_nom.columns = [c.upper() for c in df_nom.columns]
+if "PATENTE" not in df_nom.columns:
+    for c in df_nom.columns:
+        if "PAT" in c.upper():
+            df_nom = df_nom.rename(columns={c: "PATENTE"})
+            break
+
+possible_names = [c for c in df_nom.columns if "LIT" in c.upper() and "100" in c]
+if not possible_names:
+    possible_names = [c for c in df_nom.columns if "LIT" in c.upper()]
+consumo_col = possible_names[0]
+df_nom = df_nom.rename(columns={consumo_col: "LITROS_100KM"})
+
+# ==========================
+# 3) LIMPIEZA Y VALIDACIÓN
+# ==========================
+
+df_cons["LITROS"] = to_num_col(df_cons["LITROS"])
+df_km["KM_RECORRIDOS"] = to_num_col(df_km["KM_RECORRIDOS"])
+df_nom["LITROS_100KM"] = to_num_col(df_nom["LITROS_100KM"])
+
+df_cons["PATENTE"] = df_cons["PATENTE"].astype(str).str.upper().str.strip()
+df_km["PATENTE"] = df_km["PATENTE"].astype(str).str.upper().str.strip()
+df_nom["PATENTE"] = df_nom["PATENTE"].astype(str).str.upper().str.strip()
+
+df_cons_invalidas = df_cons[~df_cons["PATENTE"].apply(es_patente_valida)]
+df_km_invalidas   = df_km[~df_km["PATENTE"].apply(es_patente_valida)]
+df_nom_invalidas  = df_nom[~df_nom["PATENTE"].apply(es_patente_valida)]
+
+df_cons = df_cons[df_cons["PATENTE"].apply(es_patente_valida)]
+df_km   = df_km[df_km["PATENTE"].apply(es_patente_valida)]
+df_nom = df_nom[df_nom["PATENTE"].apply(es_patente_valida)]
+
+# ==========================
+# 4) AGRUPACIÓN
+# ==========================
+
+df_litros_total = df_cons.groupby("PATENTE", as_index=False)["LITROS"].sum().rename(columns={"LITROS": "LITROS_TOTALES"})
+df_km_total = df_km.groupby("PATENTE", as_index=False)["KM_RECORRIDOS"].sum()
+
+# ==========================
+# 5) UNIFICACIÓN
+# ==========================
+
+cols_nom = ["PATENTE", "LITROS_100KM"]
+if "MODELO" in df_nom.columns:
+    cols_nom.append("MODELO")
+
+df_final = pd.merge(df_km_total, df_litros_total, on="PATENTE", how="outer")
+df_final = pd.merge(df_final, df_nom[cols_nom], on="PATENTE", how="left")
+
+df_final["KM_RECORRIDOS"] = df_final["KM_RECORRIDOS"].fillna(0)
+df_final["LITROS_TOTALES"] = df_final["LITROS_TOTALES"].fillna(0)
+
+# ==========================
+# 6) CÁLCULOS
+# ==========================
+
+df_final["CONSUMO_REAL_L_100KM"] = np.where(
+    df_final["KM_RECORRIDOS"] > 0,
+    (df_final["LITROS_TOTALES"] / df_final["KM_RECORRIDOS"]) * 100,
+    np.nan
+)
+
+df_final["CONSUMO_TEORICO_L_100KM"] = df_final["LITROS_100KM"]
+df_final["LITROS_TEOREICOS_ESPERADOS"] = df_final["KM_RECORRIDOS"] * df_final["CONSUMO_TEORICO_L_100KM"] / 100
+
+df_final["DESVIO_LITROS"] = df_final["LITROS_TOTALES"] - df_final["LITROS_TEOREICOS_ESPERADOS"]
+df_final["DESVIO_PCT"] = np.where(
+    df_final["LITROS_TEOREICOS_ESPERADOS"] > 0,
+    df_final["DESVIO_LITROS"] / df_final["LITROS_TEOREICOS_ESPERADOS"],
+    np.nan
+)
+
+df_final["MIN_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 - TOLERANCIA_PCT)
+df_final["MAX_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 + TOLERANCIA_PCT)
+
+# ==========================
+# 7) ESTADOS
+# ==========================
+
+df_final["ESTADO"] = df_final.apply(clasificar_estado, axis=1)
+
+df_final["COLOR"] = df_final["ESTADO"].map({
+    "NORMAL": "🟢",
+    "A AUDITAR": "🔴",
+    "DUDOSO": "🔵",
+    "SIN MOVIMIENTO": "⚪",
+    "FALTA CARGA": "🟣",
+    "ERROR DE KM": "⚠️",
+    "SIN DATOS": "🟡"
+})
+
+salida = df_final[[
+    "PATENTE",
+    "MODELO",
+    "KM_RECORRIDOS",
+    "LITROS_TOTALES",
+    "CONSUMO_REAL_L_100KM",
+    "CONSUMO_TEORICO_L_100KM",
+    "LITROS_TEOREICOS_ESPERADOS",
+    "DESVIO_LITROS",
+    "DESVIO_PCT",
+    "ESTADO",
+    "COLOR"
+]].sort_values(["MODELO", "PATENTE"])
+
+# ==========================
+# 8) STREAMLIT – LAYOUT
+# ==========================
+
+st.set_page_config(page_title="Control inteligente de consumo", layout="wide")
+
+# Encabezado corporativo
+header_col1, header_col2 = st.columns([1, 4])
+with header_col1:
+    posibles_logos = [
+        "logo_bca.png", "logo_bca.jpeg", "logo_bca.jpg",
+        "logo.png", "logo.jpg", "logo.jpeg"
+    ]
+    logo_encontrado = None
+    for l in posibles_logos:
+        if os.path.exists(l):
+            logo_encontrado = l
+            break
+    if logo_encontrado:
+        st.image(logo_encontrado, width=110)
+with header_col2:
+    st.markdown(
+        f"""
+        <div style="background:linear-gradient(90deg,{COLOR_PRINCIPAL},{COLOR_SECUNDARIO});
+                    padding:16px 24px;
+                    border-radius:16px;
+                    color:white;">
+            <div style="font-size:22px;font-weight:bold;">
+                Control inteligente de consumo – Grupo BCA
+            </div>
+            <div style="font-size:13px;opacity:0.9;">
+                Monitoreo semanal de consumo y desvíos
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# ==========================
+# 9) FILTROS
+# ==========================
+
+st.sidebar.header("Filtros")
+
+modelos = salida["MODELO"].dropna().unique().tolist()
+modelos.sort()
+modelo_sel = st.sidebar.selectbox("Modelo", ["TODOS"] + modelos)
+
+estados_disponibles = salida["ESTADO"].dropna().unique().tolist()
+estado_sel = st.sidebar.multiselect("Estados", estados_disponibles, default=estados_disponibles)
+
+columna_orden = st.sidebar.selectbox("Ordenar por", salida.columns.tolist())
+asc = st.sidebar.checkbox("Orden ascendente", True)
+
+salida_filtrada = salida.copy()
+if modelo_sel != "TODOS":
+    salida_filtrada = salida_filtrada[salida_filtrada["MODELO"] == modelo_sel]
+
+salida_filtrada = salida_filtrada[salida_filtrada["ESTADO"].isin(estado_sel)]
+salida_filtrada = salida_filtrada.sort_values(by=columna_orden, ascending=asc)
+
+# ==========================
+# 10) KPIs
+# ==========================
+
+total = len(salida_filtrada)
+normal = (salida_filtrada["ESTADO"] == "NORMAL").sum()
+auditar = (salida_filtrada["ESTADO"] == "A AUDITAR").sum()
+dudoso = (salida_filtrada["ESTADO"] == "DUDOSO").sum()
+
+pct_normal = (normal / total * 100) if total > 0 else 0
+
+k1, k2, k3, k4 = st.columns(4)
+with k1:
+    st.markdown(kpi_card("Normal", normal, COLOR_PRINCIPAL), unsafe_allow_html=True)
+with k2:
+    st.markdown(kpi_card("A Auditar", auditar, "#c62828"), unsafe_allow_html=True)
+with k3:
+    st.markdown(kpi_card("Dudoso", dudoso, "#1565c0"), unsafe_allow_html=True)
+with k4:
+    st.markdown(kpi_card("% Normal", f"{pct_normal:.1f}%", COLOR_SECUNDARIO), unsafe_allow_html=True)
+
+# ==========================
+# 11) GRÁFICO — DISTRIBUCIÓN DE ESTADOS
+# ==========================
+
+st.subheader("Distribución de estados")
+
+if not salida_filtrada.empty:
+    resumen_est = (
+        salida_filtrada["ESTADO"]
+        .value_counts()
+        .rename_axis("Estado")
+        .reset_index(name="Cantidad")
+    )
+
+    bar_color = "#009999"
+
+    chart_barras = (
+        alt.Chart(resumen_est)
+        .mark_bar(color=bar_color)
+        .encode(
+            x=alt.X("Estado:N", sort=None, title="Estado"),
+            y=alt.Y("Cantidad:Q", title="Cantidad"),
+            tooltip=["Estado", "Cantidad"]
+        )
+    )
+
+    labels = (
+        alt.Chart(resumen_est)
+        .mark_text(
+            align="center",
+            baseline="bottom",
+            dy=-2,
+            fontSize=14,
+            color=bar_color
+        )
+        .encode(
+            x="Estado:N",
+            y="Cantidad:Q",
+            text="Cantidad:Q"
+        )
+    )
+
+    st.altair_chart(chart_barras + labels, use_container_width=True)
+
+# ==========================
+# 12) TABLA DETALLADA
+# ==========================
+
+st.subheader("Detalle por unidad")
+
+html_table = salida_filtrada.style.apply(color_row, axis=1).format({
+    "KM_RECORRIDOS": "{:.2f}",
+    "LITROS_TOTALES": "{:.2f}",
+    "CONSUMO_REAL_L_100KM": "{:.2f}",
+    "CONSUMO_TEORICO_L_100KM": "{:.2f}",
+    "LITROS_TEOREICOS_ESPERADOS": "{:.2f}",
+    "DESVIO_LITROS": "{:.2f}",
+    "DESVIO_PCT": "{:.1%}"
+}).to_html()
+
+st.markdown(html_table, unsafe_allow_html=True)
+
+# ==========================
+# 13) EXPORTACIÓN
+# ==========================
+
+st.subheader("📥 Exportar datos")
+
+buffer_excel = BytesIO()
+salida_filtrada.to_excel(buffer_excel, index=False, engine="openpyxl")
+buffer_excel.seek(0)
+st.download_button("📘 Descargar Excel", data=buffer_excel, file_name="control_consumo.xlsx")
+
+csv_data = salida_filtrada.to_csv(index=False, sep=";", decimal=",").encode("utf-8")
+st.download_button("📄 Descargar CSV", data=csv_data, file_name="control_consumo.csv")
+
+# ==========================
+# 14) RESUMEN
+# ==========================
+
+st.subheader("Resumen de estados")
+
+resumen = (
+    salida_filtrada["ESTADO"]
+    .value_counts()
+    .rename_axis("Estado")
+    .reset_index(name="Cantidad")
+)
+
+orden = ["A AUDITAR", "DUDOSO", "NORMAL", "FALTA CARGA", "ERROR DE KM", "SIN MOVIMIENTO", "SIN DATOS"]
+resumen["orden"] = resumen["Estado"].apply(lambda x: orden.index(x) if x in orden else 999)
+resumen = resumen.sort_values("orden")
+
+colores_estado = {
+    "A AUDITAR": "🔴",
+    "DUDOSO": "🔵",
+    "NORMAL": "🟢",
+    "FALTA CARGA": "🟣",
+    "ERROR DE KM": "⚠️",
+    "SIN MOVIMIENTO": "⚪",
+    "SIN DATOS": "🟡"
+}
+
+for _, row in resumen.iterrows():
+    st.markdown(f"### {colores_estado[row['Estado']]} {row['Estado']}: {row['Cantidad']}")
+
+# ==========================
+# 15) FOOTER
+# ==========================
+
+st.write("---")
+st.caption("Sistema de Control Inteligente de Consumo – Grupo BCA · Versión Optimizada")

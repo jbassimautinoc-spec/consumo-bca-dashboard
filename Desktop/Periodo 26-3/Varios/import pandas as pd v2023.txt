@@ -1,0 +1,140 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+
+# Parámetros
+TOLERANCIA_PCT = 0.10  # tolerancia 10%
+
+# Nombres de archivos
+FILE_CONSUMO = "consumo_real.xlsx"
+FILE_KM = "distances_26-11 al 03-12.xlsx"
+FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+
+# --- 1) Carga ---
+df_cons = pd.read_excel(FILE_CONSUMO)
+df_km = pd.read_excel(FILE_KM)
+df_nom = pd.read_excel(FILE_NOMINA)
+
+# --- 2) Normalizar nombres ---
+df_cons = df_cons.rename(columns={
+    "IDENTIFICACIONTARJETA": "PATENTE",
+    "LITROS UNIDADES": "LITROS"
+})
+df_km = df_km.rename(columns={
+    "Placa/Patente": "PATENTE",
+    "Distancia [km]": "KM_RECORRIDOS"
+})
+
+nom_cols = [c.upper() for c in df_nom.columns]
+if "PATENTE" not in nom_cols:
+    for c in df_nom.columns:
+        if "PAT" in c.upper() or "DOMIN" in c.upper():
+            df_nom = df_nom.rename(columns={c: "PATENTE"})
+            break
+else:
+    df_nom.columns = [c.upper() for c in df_nom.columns]
+    if "PATENTE" not in df_nom.columns:
+        df_nom = df_nom.rename(columns={df_nom.columns[0]:"PATENTE"})
+
+possible_names = [c for c in df_nom.columns if "LIT" in c.upper() and "100" in c]
+if not possible_names:
+    possible_names = [c for c in df_nom.columns if "LIT" in c.upper()]
+if not possible_names:
+    raise ValueError("No encontré en Nomina_consumo_camion.xlsx la columna de litros/100km. Revísala.")
+consumo_col = possible_names[0]
+df_nom = df_nom.rename(columns={consumo_col: "LITROS_100KM", "PATENTE": "PATENTE"})
+
+# --- 3) Limpieza ---
+def to_num_col(s):
+    if s.dtype == object:
+        return s.astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.replace(r"\s+", "", regex=True).replace("", np.nan).astype(float)
+    else:
+        return pd.to_numeric(s, errors="coerce")
+
+df_cons["LITROS"] = to_num_col(df_cons["LITROS"])
+df_km["KM_RECORRIDOS"] = to_num_col(df_km["KM_RECORRIDOS"])
+df_nom["LITROS_100KM"] = to_num_col(df_nom["LITROS_100KM"])
+
+df_cons["PATENTE"] = df_cons["PATENTE"].astype(str).str.strip().str.upper()
+df_km["PATENTE"] = df_km["PATENTE"].astype(str).str.strip().str.upper()
+df_nom["PATENTE"] = df_nom["PATENTE"].astype(str).str.strip().str.upper()
+
+# --- 4) Agrupar litros ---
+df_litros_total = df_cons.groupby("PATENTE", as_index=False)["LITROS"].sum().rename(columns={"LITROS":"LITROS_TOTALES"})
+
+# --- 5) Km total ---
+df_km_total = df_km.groupby("PATENTE", as_index=False)["KM_RECORRIDOS"].sum()
+
+# --- 6) Merge ---
+df_final = pd.merge(df_km_total, df_litros_total, on="PATENTE", how="outer")
+df_final = pd.merge(df_final, df_nom[["PATENTE", "LITROS_100KM"]], on="PATENTE", how="left")
+
+df_final["KM_RECORRIDOS"] = df_final["KM_RECORRIDOS"].fillna(0)
+df_final["LITROS_TOTALES"] = df_final["LITROS_TOTALES"].fillna(0)
+
+# --- 7) Cálculos ---
+df_final["CONSUMO_REAL_L_100KM"] = np.where(
+    df_final["KM_RECORRIDOS"] > 0,
+    (df_final["LITROS_TOTALES"] / df_final["KM_RECORRIDOS"]) * 100,
+    np.nan
+)
+df_final["CONSUMO_TEORICO_L_100KM"] = df_final["LITROS_100KM"]
+df_final["LITROS_TEORICOS_ESPERADOS"] = (df_final["KM_RECORRIDOS"] * df_final["CONSUMO_TEORICO_L_100KM"]) / 100
+df_final["DESVIO_LITROS"] = df_final["LITROS_TOTALES"] - df_final["LITROS_TEORICOS_ESPERADOS"]
+df_final["DESVIO_PCT"] = np.where(
+    df_final["LITROS_TEORICOS_ESPERADOS"] > 0,
+    df_final["DESVIO_LITROS"] / df_final["LITROS_TEORICOS_ESPERADOS"],
+    np.nan
+)
+df_final["MIN_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 - TOLERANCIA_PCT)
+df_final["MAX_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 + TOLERANCIA_PCT)
+
+df_final["ESTADO"] = df_final.apply(
+    lambda r: "OK" if (pd.notna(r["CONSUMO_REAL_L_100KM"]) and pd.notna(r["CONSUMO_TEORICO_L_100KM"]) and r["MIN_OK"] <= r["CONSUMO_REAL_L_100KM"] <= r["MAX_OK"]) else (
+        "SIN DATOS" if r["KM_RECORRIDOS"]==0 or pd.isna(r["LITROS_TOTALES"]) else "FUERA"
+    ),
+    axis=1
+)
+df_final["COLOR"] = df_final["ESTADO"].map({"OK":"🟢","FUERA":"🔴","SIN DATOS":"🟡"}).fillna("🟡")
+
+salida = df_final[[
+    "PATENTE",
+    "KM_RECORRIDOS",
+    "LITROS_TOTALES",
+    "CONSUMO_REAL_L_100KM",
+    "CONSUMO_TEORICO_L_100KM",
+    "LITROS_TEORICOS_ESPERADOS",
+    "DESVIO_LITROS",
+    "DESVIO_PCT",
+    "ESTADO",
+    "COLOR"
+]].sort_values("PATENTE")
+
+# Exportar a CSV con separador ; y coma como decimal
+salida.to_csv("resultado_consumos.csv", index=False, sep=";", decimal=",")
+
+
+# --- STREAMLIT DASHBOARD ---
+st.set_page_config(page_title="Control consumo semanal", layout="wide")
+st.title("🚛 Control consumo semanal")
+
+# Función para colorear filas
+def color_row(row):
+    if row["ESTADO"] == "OK":
+        return ["background-color:#dcedc8"] * len(row)   # verde claro
+    elif row["ESTADO"] == "FUERA":
+        return ["background-color:#ffcdd2"] * len(row)   # rojo claro
+    else:
+        return ["background-color:#fff9c4"] * len(row)   # amarillo claro
+
+# Mostrar tabla estilizada
+styled = salida.style.apply(color_row, axis=1).format({
+    "KM_RECORRIDOS": "{:.2f}",
+    "LITROS_TOTALES": "{:.2f}",
+    "CONSUMO_REAL_L_100KM": "{:.2f}",
+    "CONSUMO_TEORICO_L_100KM": "{:.2f}",
+    "LITROS_TEORICOS_ESPERADOS": "{:.2f}",
+    "DESVIO_LITROS": "{:.2f}",
+    "DESVIO_PCT": "{:.1%}"
+})
+st.dataframe(styled, use_container_width=True)

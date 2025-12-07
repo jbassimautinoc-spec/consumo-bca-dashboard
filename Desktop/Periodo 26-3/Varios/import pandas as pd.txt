@@ -1,0 +1,204 @@
+import pandas as pd
+import numpy as np
+import html
+
+# Parámetros
+TOLERANCIA_PCT = 0.10  # tolerancia 10% (puedes cambiarla)
+
+# Nombres de archivos (están en la misma carpeta donde ejecutás)
+FILE_CONSUMO = "consumo_real.xlsx"
+FILE_KM = "distances_26-11 al 03-12.xlsx"
+FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+
+# --- 1) Carga ---
+df_cons = pd.read_excel(FILE_CONSUMO)
+df_km = pd.read_excel(FILE_KM)
+df_nom = pd.read_excel(FILE_NOMINA)
+
+# --- 2) Normalizar nombres de columnas relevantes ---
+# consumo_real: IDENTIFICACIONTARJETA, LITROS UNIDADES (tal como dijiste)
+df_cons = df_cons.rename(columns={
+    "IDENTIFICACIONTARJETA": "PATENTE",
+    "LITROS UNIDADES": "LITROS"
+})
+
+# distances: "Placa/Patente", "Distancia [km]"
+df_km = df_km.rename(columns={
+    "Placa/Patente": "PATENTE",
+    "Distancia [km]": "KM_RECORRIDOS"
+})
+
+# nomina: asegurar columna de litros por 100 km
+# intentamos detectar nombre flexible y normalizarlo
+nom_cols = [c.upper() for c in df_nom.columns]
+if "PATENTE" not in nom_cols:
+    # buscar columna patente posible
+    for c in df_nom.columns:
+        if "PAT" in c.upper() or "DOMIN" in c.upper():
+            df_nom = df_nom.rename(columns={c: "PATENTE"})
+            break
+else:
+    df_nom.columns = [c.upper() for c in df_nom.columns]
+    if "PATENTE" not in df_nom.columns:
+        # reassign to uppercase
+        df_nom = df_nom.rename(columns={df_nom.columns[0]:"PATENTE"})
+
+# detectar columna con consumo teórico (litros x 100 km)
+possible_names = [c for c in df_nom.columns if "LIT" in c.upper() and "100" in c]
+if not possible_names:
+    # fallback: intentar con 'litros' sola
+    possible_names = [c for c in df_nom.columns if "LIT" in c.upper()]
+if not possible_names:
+    raise ValueError("No encontré en Nomina_consumo_camion.xlsx la columna de litros/100km. Revísala.")
+consumo_col = possible_names[0]
+df_nom = df_nom.rename(columns={consumo_col: "LITROS_100KM", "PATENTE": "PATENTE"})
+
+# --- 3) Limpieza y conversión numérica (por si hay comas) ---
+def to_num_col(s):
+    if s.dtype == object:
+        return s.astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.replace(r"\s+", "", regex=True).replace("", np.nan).astype(float)
+    else:
+        return pd.to_numeric(s, errors="coerce")
+
+# convertir litros en consumo_real (al agrupar sumaremos)
+df_cons["LITROS"] = to_num_col(df_cons["LITROS"])
+
+# convertir km en df_km
+df_km["KM_RECORRIDOS"] = to_num_col(df_km["KM_RECORRIDOS"])
+
+# convertir nomina litros_100km
+df_nom["LITROS_100KM"] = to_num_col(df_nom["LITROS_100KM"])
+
+# Normalizar PATENTE como str (sin espacios)
+df_cons["PATENTE"] = df_cons["PATENTE"].astype(str).str.strip().str.upper()
+df_km["PATENTE"] = df_km["PATENTE"].astype(str).str.strip().str.upper()
+df_nom["PATENTE"] = df_nom["PATENTE"].astype(str).str.strip().str.upper()
+
+# --- 4) Agrupar litros por patente (sumatoria en el período) ---
+df_litros_total = df_cons.groupby("PATENTE", as_index=False)["LITROS"].sum().rename(columns={"LITROS":"LITROS_TOTALES"})
+
+# --- 5) Tomar km total por patente (en tu reporte ya viene total por patente) ---
+# si el excel trae una sola fila por patente, lo usamos directo; si hay varias, las sumamos
+df_km_total = df_km.groupby("PATENTE", as_index=False)["KM_RECORRIDOS"].sum()
+
+# --- 6) Armar tabla final uniendo litros, km y nomina ---
+df_final = pd.merge(df_km_total, df_litros_total, on="PATENTE", how="outer")
+df_final = pd.merge(df_final, df_nom[["PATENTE", "LITROS_100KM"]], on="PATENTE", how="left")
+
+# rellenar ceros donde falte (evitar div/0)
+df_final["KM_RECORRIDOS"] = df_final["KM_RECORRIDOS"].fillna(0)
+df_final["LITROS_TOTALES"] = df_final["LITROS_TOTALES"].fillna(0)
+
+# --- 7) Cálculos ---
+# consumo real en L/100km (si KM>0)
+df_final["CONSUMO_REAL_L_100KM"] = np.where(
+    df_final["KM_RECORRIDOS"] > 0,
+    (df_final["LITROS_TOTALES"] / df_final["KM_RECORRIDOS"]) * 100,
+    np.nan
+)
+
+# consumo teorico en L/100km (viene de nomina)
+df_final["CONSUMO_TEORICO_L_100KM"] = df_final["LITROS_100KM"]
+
+# litros teóricos esperados = km * (L/100km)
+df_final["LITROS_TEORICOS_ESPERADOS"] = (df_final["KM_RECORRIDOS"] * df_final["CONSUMO_TEORICO_L_100KM"]) / 100
+
+# desviación en litros y en %
+df_final["DESVIO_LITROS"] = df_final["LITROS_TOTALES"] - df_final["LITROS_TEORICOS_ESPERADOS"]
+df_final["DESVIO_PCT"] = np.where(
+    df_final["LITROS_TEORICOS_ESPERADOS"] > 0,
+    df_final["DESVIO_LITROS"] / df_final["LITROS_TEORICOS_ESPERADOS"],
+    np.nan
+)
+
+# comparar por tolerancia sobre consumo teorico (en L/100km)
+df_final["MIN_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 - TOLERANCIA_PCT)
+df_final["MAX_OK"] = df_final["CONSUMO_TEORICO_L_100KM"] * (1 + TOLERANCIA_PCT)
+
+df_final["ESTADO"] = df_final.apply(
+    lambda r: "OK" if (pd.notna(r["CONSUMO_REAL_L_100KM"]) and pd.notna(r["CONSUMO_TEORICO_L_100KM"]) and r["MIN_OK"] <= r["CONSUMO_REAL_L_100KM"] <= r["MAX_OK"]) else (
+        "SIN DATOS" if r["KM_RECORRIDOS"]==0 or pd.isna(r["LITROS_TOTALES"]) else "FUERA"
+    ),
+    axis=1
+)
+
+df_final["COLOR"] = df_final["ESTADO"].map({"OK":"🟢","FUERA":"🔴","SIN DATOS":"🟡"}).fillna("🟡")
+
+# --- 8) Columnas de salida limpias y ordenadas ---
+salida = df_final[[
+    "PATENTE",
+    "KM_RECORRIDOS",
+    "LITROS_TOTALES",
+    "CONSUMO_REAL_L_100KM",
+    "CONSUMO_TEORICO_L_100KM",
+    "LITROS_TEORICOS_ESPERADOS",
+    "DESVIO_LITROS",
+    "DESVIO_PCT",
+    "ESTADO",
+    "COLOR"
+]].sort_values("PATENTE")
+
+# Exportar Excel
+salida.to_excel("resultado_consumos.xlsx", index=False)
+
+# --- 9) Generar HTML con fila coloreada y botón ---
+def row_color(est):
+    if est == "OK":
+        return "#dcedc8"  # verde claro
+    elif est == "FUERA":
+        return "#ffcdd2"  # rojo claro
+    else:
+        return "#fff9c4"  # amarillo claro (sin datos)
+
+# construir tabla HTML manualmente para poder poner botón
+html_rows = []
+for _, r in salida.iterrows():
+    color = row_color(r["ESTADO"])
+    boton_html = ""
+    if r["ESTADO"] == "OK":
+        boton_html = f'<button style="background:#4caf50;color:white;border:none;padding:6px 10px;border-radius:6px">OK</button>'
+    elif r["ESTADO"] == "FUERA":
+        boton_html = f'<button style="background:#f44336;color:white;border:none;padding:6px 10px;border-radius:6px">ALERTA</button>'
+    else:
+        boton_html = f'<button style="background:#ffb300;color:white;border:none;padding:6px 10px;border-radius:6px">SIN DATOS</button>'
+
+    html_rows.append(
+        f"<tr style='background:{color}'>"
+        f"<td>{html.escape(str(r['PATENTE']))}</td>"
+        f"<td style='text-align:right'>{0 if pd.isna(r['KM_RECORRIDOS']) else round(r['KM_RECORRIDOS'],2)}</td>"
+        f"<td style='text-align:right'>{round(r['LITROS_TOTALES'],2)}</td>"
+        f"<td style='text-align:right'>{'' if pd.isna(r['CONSUMO_REAL_L_100KM']) else round(r['CONSUMO_REAL_L_100KM'],2)}</td>"
+        f"<td style='text-align:right'>{'' if pd.isna(r['CONSUMO_TEORICO_L_100KM']) else round(r['CONSUMO_TEORICO_L_100KM'],2)}</td>"
+        f"<td style='text-align:right'>{round(r['DESVIO_LITROS'],2)}</td>"
+        f"<td style='text-align:right'>{'' if pd.isna(r['DESVIO_PCT']) else '{:.1%}'.format(r['DESVIO_PCT'])}</td>"
+        f"<td style='text-align:center'>{boton_html}</td>"
+        f"</tr>"
+    )
+
+html_table = """
+<html><head><meta charset="utf-8"><title>Control consumo semanal</title>
+<style>
+table{border-collapse:collapse;width:100%;font-family:Arial,Helvetica,sans-serif}
+th,td{border:1px solid #ddd;padding:6px;font-size:13px}
+th{background:#1976d2;color:white}
+</style>
+</head><body>
+<h2>Control consumo semanal</h2>
+<table>
+<thead>
+<tr>
+<th>PATENTE</th><th>KM RECORRIDOS</th><th>LITROS TOTALES</th>
+<th>CONSUMO REAL (L/100km)</th><th>CONSUMO TEÓRICO (L/100km)</th>
+<th>DESVIO LITROS</th><th>DESVIO %</th><th>ESTADO</th>
+</tr>
+</thead>
+<tbody>
+""" + "\n".join(html_rows) + """
+</tbody></table>
+</body></html>
+"""
+
+with open("control_consumo_semanal.html", "w", encoding="utf-8") as f:
+    f.write(html_table)
+
+print("Listo: 'resultado_consumos.xlsx' y 'control_consumo_semanal.html' generados.")
