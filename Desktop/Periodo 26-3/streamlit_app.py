@@ -1,9 +1,8 @@
+import streamlit as st
 
 # ==========================
 # AUTENTICACIÓN POR EMAIL + CÓDIGO
 # ==========================
-
-import streamlit as st
 
 USUARIOS_PERMITIDOS = {
     "ycarriego@grupobca.com.ar": 8521,
@@ -18,29 +17,32 @@ USUARIOS_PERMITIDOS = {
 
 # Inicializar variable de sesión
 if "autenticado" not in st.session_state:
-    st.session_state["autenticado"] = False
+    st.session_state.autenticado = False
 
-# Pantalla de login si NO está autenticado
-if not st.session_state["autenticado"]:
-    st.header("Acceso al Panel de Consumo BCA")
+# --- BLOQUE DE LOGIN ---
+if not st.session_state.autenticado:
 
-    email = st.text_input("Ingrese su correo corporativo:")
-    codigo = st.text_input("Ingrese su código de acceso:", type="password")
+    st.title("Acceso al Panel de Consumo BCA")
+
+    email = st.text_input("Correo institucional")
+    codigo = st.text_input("Código de acceso", type="password")
 
     if st.button("Ingresar"):
         if email in USUARIOS_PERMITIDOS and str(codigo) == str(USUARIOS_PERMITIDOS[email]):
-            st.session_state["autenticado"] = True
-            st.success("Acceso concedido. Bienvenido.")
+            st.session_state.autenticado = True
             st.rerun()
-
         else:
             st.error("Correo o código incorrecto.")
 
-    st.stop()  # 🔥 BLOQUEA TODO EL DASHBOARD
+    st.stop()   # 👈 Esto bloquea el resto del dashboard sin romper el DOM
+
+
+# ==========================
+# IMPORTS DEL DASHBOARD
+# ==========================
 
 import pandas as pd
 import numpy as np
-import streamlit as st
 from io import BytesIO
 import re
 import altair as alt
@@ -60,6 +62,7 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 # ==========================
 # CONFIGURACIÓN GENERAL
 # ==========================
+
 
 TOLERANCIA_PCT = 0.10
 
