@@ -1,6 +1,6 @@
 # ==========================
 # CONTROL INTELIGENTE DE CONSUMO – GRUPO BCA
-# Versión: Login único + PDF Premium
+# Versión: Login por correo (sin código)
 # ==========================
 
 import os
@@ -31,6 +31,57 @@ st.set_page_config(
     page_title="Control inteligente de consumo – Grupo BCA",
     layout="wide"
 )
+
+# ==========================
+# AUTENTICACIÓN SOLO POR EMAIL (SIN CÓDIGO)
+# ==========================
+
+USUARIOS_PERMITIDOS = {
+    "ycarriego@grupobca.com.ar",
+    "aescobar@grupobca.com.ar",
+    "oscarsaavedra01@gmail.com",
+    "jptermite@grupobca.com.ar",
+    "mcabo@grupobca.com.ar",
+    "jbassi@grupobca.com.ar",
+    "mmanresa@grupobca.com.ar",
+    "dloillet@grupobca.com.ar",
+}
+
+# Inicializar variable de sesión
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+# Pantalla de login si NO está autenticado
+if not st.session_state["autenticado"]:
+    st.markdown(
+        """
+        <h2 style="text-align:center; margin-bottom:0;">
+            Acceso al Panel de Consumo BCA
+        </h2>
+        <p style="text-align:center; margin-top:4px; color:gray;">
+            Ingrese su correo corporativo autorizado.
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_login1, col_login2, col_login3 = st.columns([1, 2, 1])
+    with col_login2:
+        email = st.text_input("Correo corporativo:", key="login_email")
+
+        if st.button("Ingresar", type="primary"):
+            email_norm = email.strip().lower()
+
+            if email_norm in {c.lower() for c in USUARIOS_PERMITIDOS}:
+                st.session_state["autenticado"] = True
+                st.session_state["usuario"] = email_norm
+                st.success("Acceso concedido. Bienvenido.")
+                st.rerun()
+            else:
+                st.error("Correo no autorizado. Verifique e intente nuevamente.")
+
+    st.stop()  # 🔥 BLOQUEA TODO EL DASHBOARD SI NO SE LOGUEÓ
+
 
 # ==========================
 # AUTENTICACIÓN POR EMAIL + CÓDIGO (ÚNICA)
