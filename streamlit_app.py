@@ -233,8 +233,7 @@ def recomendaciones_automaticas(normal, auditar, dudoso, sin_datos, total):
 # ==========================
 # 1) CARGA DE ARCHIVOS
 # ==========================
-st.write("DEBUG — ESTA ES LA VERSION NUEVA DEL CODIGO")
-st.write("FILE_CONSUMO =", FILE_CONSUMO)
+
 
 df_cons = pd.read_excel(FILE_CONSUMO)
 df_km = pd.read_excel(FILE_KM)
