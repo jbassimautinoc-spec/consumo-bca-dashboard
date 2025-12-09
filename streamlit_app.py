@@ -1,3 +1,4 @@
+# FORCE DEPLOY 1
 # ==========================
 # CONTROL INTELIGENTE DE CONSUMO – GRUPO BCA
 # Versión: Login por correo (sin código)
@@ -90,14 +91,14 @@ if not st.session_state["autenticado"]:
 # CONFIGURACIÓN GENERAL DE DATOS
 # ==========================
 
-    TOLERANCIA_PCT = 0.10
+TOLERANCIA_PCT = 0.10
 
-    FILE_CONSUMO = "consumo_real.xlsx"
-    FILE_KM = "distances_26-11 al 03-12.xlsx"   # ajustá el nombre si cambia
-    FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+FILE_CONSUMO = "consumo_real.xlsx"
+FILE_KM = "distances_26_11_03_12.xlsx"   # ajustá el nombre si cambia
+FILE_NOMINA = "Nomina_consumo_camion.xlsx"
 
-    COLOR_PRINCIPAL = "#006778"   # BCA aprox
-    COLOR_SECUNDARIO = "#009999"  # BCA aprox
+COLOR_PRINCIPAL = "#006778"   # BCA aprox
+COLOR_SECUNDARIO = "#009999"  # BCA aprox
 
 # ==========================
 # FUNCIONES AUXILIARES  
