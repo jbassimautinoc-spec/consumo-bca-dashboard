@@ -1011,3 +1011,7 @@ for _, row in resumen.iterrows():
 
 st.write("---")
 st.caption("Sistema de Control Inteligente de Consumo – Grupo BCA · Versión PDF Premium 2.0")
+
+# TEST DESDE POWERSHELL
+
+# TEST DESDE POWERSHELL
