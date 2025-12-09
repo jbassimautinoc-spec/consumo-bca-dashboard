@@ -40,6 +40,8 @@ USUARIOS_PERMITIDOS = {
     "ycarriego@grupobca.com.ar",
     "aescobar@grupobca.com.ar",
     "oscarsaavedra01@gmail.com",
+    "mcarmona@grupobca.com.ar",
+    "mmaxit@grupobca.com.ar",
     "jptermite@grupobca.com.ar",
     "mcabo@grupobca.com.ar",
     "jbassi@grupobca.com.ar",
@@ -88,17 +90,17 @@ if not st.session_state["autenticado"]:
 # CONFIGURACIÓN GENERAL DE DATOS
 # ==========================
 
-TOLERANCIA_PCT = 0.10
+    TOLERANCIA_PCT = 0.10
 
-FILE_CONSUMO = "consumo_real.xlsx"
-FILE_KM = "distances_26-11 al 03-12.xlsx"   # ajustá el nombre si cambia
-FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+    FILE_CONSUMO = "consumo_real.xlsx"
+    FILE_KM = "distances_26-11 al 03-12.xlsx"   # ajustá el nombre si cambia
+    FILE_NOMINA = "Nomina_consumo_camion.xlsx"
 
-COLOR_PRINCIPAL = "#006778"   # BCA aprox
-COLOR_SECUNDARIO = "#009999"  # BCA aprox
+    COLOR_PRINCIPAL = "#006778"   # BCA aprox
+    COLOR_SECUNDARIO = "#009999"  # BCA aprox
 
 # ==========================
-# FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES  
 # ==========================
 
 def es_patente_valida(p):
