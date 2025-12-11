@@ -236,9 +236,11 @@ def recomendaciones_automaticas(normal, auditar, dudoso, sin_datos, total):
 # ==========================
 
 
+
 df_cons = pd.read_excel(FILE_CONSUMO)
 df_km = pd.read_excel(FILE_KM)
 df_nom = pd.read_excel(FILE_NOMINA)
+
 
 # ==========================
 # 2) NORMALIZAR NOMBRES
