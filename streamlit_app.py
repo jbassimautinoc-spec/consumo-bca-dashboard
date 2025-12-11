@@ -1,5 +1,5 @@
-# FORCE DEPLOY 1
-# ==========================
+	# ==========================# TEST CAMBIO - NO BORRAR
+
 # CONTROL INTELIGENTE DE CONSUMO – GRUPO BCA
 # Versión: Login por correo (sin código)
 # ==========================
@@ -91,14 +91,14 @@ if not st.session_state["autenticado"]:
 # CONFIGURACIÓN GENERAL DE DATOS
 # ==========================
 
-TOLERANCIA_PCT = 0.10
+    TOLERANCIA_PCT = 0.10
 
-FILE_CONSUMO = "consumo_real.xlsx"
-FILE_KM = "distances_26_11_03_12.xlsx"   # ajustá el nombre si cambia
-FILE_NOMINA = "Nomina_consumo_camion.xlsx"
+    FILE_CONSUMO = "consumo_real.xlsx"
+    FILE_KM = "distances_26-11_03-12.xlsx"   # ajustá el nombre si cambia
+    FILE_NOMINA = "Nomina_consumo_camion.xlsx"
 
-COLOR_PRINCIPAL = "#006778"   # BCA aprox
-COLOR_SECUNDARIO = "#009999"  # BCA aprox
+    COLOR_PRINCIPAL = "#006778"   # BCA aprox
+    COLOR_SECUNDARIO = "#009999"  # BCA aprox
 
 # ==========================
 # FUNCIONES AUXILIARES  
@@ -233,7 +233,6 @@ def recomendaciones_automaticas(normal, auditar, dudoso, sin_datos, total):
 # ==========================
 # 1) CARGA DE ARCHIVOS
 # ==========================
-
 
 df_cons = pd.read_excel(FILE_CONSUMO)
 df_km = pd.read_excel(FILE_KM)
@@ -1013,7 +1012,3 @@ for _, row in resumen.iterrows():
 
 st.write("---")
 st.caption("Sistema de Control Inteligente de Consumo – Grupo BCA · Versión PDF Premium 2.0")
-
-# TEST DESDE POWERSHELL
-
-# TEST DESDE POWERSHELL
