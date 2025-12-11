@@ -234,8 +234,7 @@ def recomendaciones_automaticas(normal, auditar, dudoso, sin_datos, total):
 # ==========================
 # 1) CARGA DE ARCHIVOS
 # ==========================
-st.write("DEBUG - FILE_CONSUMO existe?:", 'FILE_CONSUMO' in globals())
-st.write("DEBUG - Valor de FILE_CONSUMO:", globals().get("FILE_CONSUMO", "NO DEFINIDO"))
+
 
 df_cons = pd.read_excel(FILE_CONSUMO)
 df_km = pd.read_excel(FILE_KM)
