@@ -13,6 +13,8 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
+
+
 # PDF / ReportLab
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
@@ -23,6 +25,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.graphics.shapes import Drawing, Rect
 from reportlab.graphics.charts.barcharts import VerticalBarChart
+from datetime import datetime
+fecha_actualizacion = datetime.now().strftime("%d/%m/%Y")
 
 # ==========================
 # CONFIG STREAMLIT – TIENE QUE IR PRIMERO
@@ -411,17 +415,15 @@ with header_col2:
             <div style="font-size:13px;opacity:0.9;">
                 Monitoreo de consumo real vs teórico por unidad y modelo
             </div>
+            <div style="font-size:12px;opacity:0.85;margin-top:6px;">
+                Última actualización: {fecha_actualizacion}
+            </div>
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
-st.markdown(
-    """
-    <div style="height:35px;"></div>
-    """,
-    unsafe_allow_html=True,
-)
+
 
 # ==========================
 # 9) FILTROS
@@ -443,10 +445,13 @@ asc = st.sidebar.checkbox("Orden ascendente", True)
 
 salida_filtrada = salida.copy()
 if modelo_sel != "TODOS":
-    salida_filtrada = salida_filtrada[salida_filtrada["MODELO"] == modelo_sel]
+    salida_filtrada = salida_filtrada[salida_filtrada["MODELO"] == modelo_sel]  
 
 salida_filtrada = salida_filtrada[salida_filtrada["ESTADO"].isin(estado_sel)]
 salida_filtrada = salida_filtrada.sort_values(by=columna_orden, ascending=asc)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
 
 # ==========================
 # 10) KPIs
